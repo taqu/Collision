@@ -6,18 +6,18 @@
 #include "BinQBVH.h"
 #if defined(BVH_UE)
 #else
-#include <cmath>
-#include <cstdio>
+#    include <cmath>
+#    include <cstdio>
 #endif
 
-#    if defined(BVH_NEON)
+#if defined(BVH_NEON)
 bvh_int32_t movemask(uint32x4_t x)
 {
     bvh_uint32_t mask[4];
     vst1q_u32(mask, x);
     return ((mask[3] & 0x01U) << 3) | ((mask[2] & 0x01U) << 2) | ((mask[1] & 0x01U) << 1) | ((mask[0] & 0x01U) << 0);
 }
-#    endif
+#endif
 
 namespace bvh
 {
@@ -68,7 +68,7 @@ u32 leadingzero(u32 x)
 #endif
 }
 
-#	if defined(BVH_UE)
+#if defined(BVH_UE)
 #else
 //--- RGB
 //--------------------------------------------------------------
@@ -78,11 +78,11 @@ void printImage(const char* filename, RGB* rgb, u32 width, u32 height)
     BVH_ASSERT(BVH_NULL != rgb);
 
     FILE* file = BVH_NULL;
-#if defined(_MSC_VER)
+#    if defined(_MSC_VER)
     fopen_s(&file, filename, "wb");
-#else
+#    else
     file = fopen(filename, "wb");
-#endif
+#    endif
     if(NULL == file) {
         return;
     }
@@ -113,6 +113,11 @@ void Vector3::zero()
     x_ = y_ = z_ = 0.0f;
 }
 
+Vector3 Vector3::operator-() const
+{
+    return {-x_, -y_, -z_};
+}
+
 f32 Vector3::length() const
 {
     return BVH_SQRT(x_ * x_ + y_ * y_ + z_ * z_);
@@ -123,11 +128,20 @@ f32 Vector3::halfArea() const
     return x_ * y_ + y_ * z_ + z_ * x_;
 }
 
-Vector3& Vector3::operator*=(f32 a)
+Vector3& Vector3::operator*=(f32 x)
 {
-    x_ *= a;
-    y_ *= a;
-    z_ *= a;
+    x_ *= x;
+    y_ *= x;
+    z_ *= x;
+    return *this;
+}
+
+Vector3& Vector3::operator/=(f32 x)
+{
+    f32 inv = 1.0f / x;
+    x_ *= inv;
+    y_ *= inv;
+    z_ *= inv;
     return *this;
 }
 
@@ -163,6 +177,16 @@ Vector3 normalize(const Vector3& v)
     return {v.x_ * il, v.y_ * il, v.z_ * il};
 }
 
+Vector3 normalizeZero(const Vector3& v)
+{
+    f32 l = v.length();
+    if(l <= F32_EPSILON) {
+        return {0.0f, 0.0f, 0.0f};
+    }
+    f32 il = 1.0f / l;
+    return {v.x_ * il, v.y_ * il, v.z_ * il};
+}
+
 f32 dot(const Vector3& v0, const Vector3& v1)
 {
     return v0.x_ * v1.x_ + v0.y_ * v1.y_ + v0.z_ * v1.z_;
@@ -174,6 +198,18 @@ Vector3 cross(const Vector3& v0, const Vector3& v1)
     f32 y = v0.z_ * v1.x_ - v0.x_ * v1.z_;
     f32 z = v0.x_ * v1.y_ - v0.y_ * v1.x_;
     return {x, y, z};
+}
+
+void orthonormalBasis(Vector3& xaxis, Vector3& yaxis, const Vector3& zaxis)
+{
+    Vector3 up;
+    if(0.9999999f < absolute(zaxis.y_)) {
+        up = {zaxis.x_, zaxis.z_, -zaxis.y_};
+    } else {
+        up = {0.0f, 1.0f, 0.0f};
+    }
+    xaxis = normalizeZero(cross(up, zaxis));
+    yaxis = normalizeZero(cross(zaxis, xaxis));
 }
 
 namespace
@@ -209,27 +245,27 @@ void rmortonCode3(u32& x, u32& y, u32& z, u32 w)
 
 void AABB::zero()
 {
-	bmin_.zero();
-	bmax_.zero();
+    bmin_.zero();
+    bmax_.zero();
 }
 
 void AABB::setInvalid()
 {
-	bmin_.x_ = bmin_.y_ = bmin_.z_ = bvh_limits_max;
-	bmax_.x_ = bmax_.y_ = bmax_.z_ = -bvh_limits_max;
+    bmin_.x_ = bmin_.y_ = bmin_.z_ = bvh_limits_max;
+    bmax_.x_ = bmax_.y_ = bmax_.z_ = -bvh_limits_max;
 }
 
 Vector3 AABB::extent() const
 {
-	return bmax_ - bmin_;
+    return bmax_ - bmin_;
 }
 
 Vector3 AABB::diagonal() const
 {
-	return {
-		bmax_.x_ - bmin_.x_,
-		bmax_.y_ - bmin_.y_,
-		bmax_.z_ - bmin_.z_};
+    return {
+        bmax_.x_ - bmin_.x_,
+        bmax_.y_ - bmin_.y_,
+        bmax_.z_ - bmin_.z_};
 }
 
 void AABB::extend(const AABB& bbox)
@@ -296,6 +332,21 @@ f32 AABB::halfArea() const
         return true;
     }
 #endif
+
+//--- Plane
+//--------------------------------------------------------------
+void Plane::set(const Vector3& point, const Vector3& normal)
+{
+    nx_ = normal.x_;
+    ny_ = normal.y_;
+    nz_ = normal.z_;
+    d_ = -dot(point, normal);
+}
+
+f32 Plane::distance(const Vector3& point) const
+{
+    return nx_ * point.x_ + ny_ * point.y_ + nz_ * point.z_ + d_;
+}
 
 //--- Ray
 //--------------------------------------------------------------
@@ -418,6 +469,42 @@ bool testRay(f32& tmin, f32& tmax, const Ray& ray, const AABB& aabb)
     return true;
 }
 
+bool testRayAABB(f32& tmin, const Vector3& origin, const Vector3& direction, const AABB& aabb)
+{
+    tmin = 0.0f;
+    f32 tmax = bvh_limits_max;
+    for(u32 i = 0; i < 3; ++i) {
+        if(absolute(direction[i]) < F32_EPSILON) {
+            if(origin[i] < aabb.bmin_[i] || aabb.bmax_[i] < origin[i]) {
+                return false;
+            }
+        } else {
+            f32 invD = 1.0f / direction[i];
+            f32 t1 = (aabb.bmin_[i] - origin[i]) * invD;
+            f32 t2 = (aabb.bmax_[i] - origin[i]) * invD;
+            if(t1 > t2) {
+                if(t2 > tmin)
+                    tmin = t2;
+                if(t1 < tmax)
+                    tmax = t1;
+            } else {
+                if(t1 > tmin)
+                    tmin = t1;
+                if(t2 < tmax)
+                    tmax = t2;
+            }
+
+            if(tmin > tmax) {
+                return false;
+            }
+            if(tmax < 0.0f) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 f32 sqrDistancePointSegment(const Vector3& start, const Vector3& end, const Vector3& point)
 {
     Vector3 d0 = end - start;
@@ -434,21 +521,105 @@ f32 sqrDistancePointSegment(const Vector3& start, const Vector3& end, const Vect
     return dot(d1, d1) - e * e / f;
 }
 
-void closestPointSegment(Vector3& closestPoint, const Vector3& start, const Vector3& end, const Vector3& point)
+void closestPointSegment(Vector3& closestPoint, const Vector3& p0, const Vector3& p1, const Vector3& point)
 {
-    Vector3 direction = end - start;
-    f32 t = dot(point - start, direction);
+    Vector3 direction = p1 - p0;
+    f32 t = dot(point - p0, direction);
     if(t < -F32_EPSILON) {
-        closestPoint = start;
+        closestPoint = p0;
     } else {
         f32 denom = dot(direction, direction);
         if(denom <= t) {
-            closestPoint = end;
+            closestPoint = p1;
         } else {
             t = t / denom;
-            closestPoint = start + (direction * t);
+            closestPoint = p0 + (direction * t);
         }
     }
+}
+
+f32 closestSegmentSegment(Vector3& c0, Vector3& c1, const Vector3& p0, const Vector3& p1, const Vector3& q0, const Vector3& q1)
+{
+    Vector3 d0 = q0 - p0;
+    Vector3 d1 = q1 - p1;
+    Vector3 r = p0 - p1;
+    f32 a = dot(d0, d0);
+    f32 e = dot(d1, d1);
+    f32 f = dot(d1, r);
+    f32 s, t;
+    if(a <= F32_EPSILON) {
+        s = 0.0f;
+        t = f / e;
+        t = bvh::clamp01(t);
+    } else {
+        f32 c = dot(d0, r);
+        if(e <= F32_EPSILON) {
+            t = 0.0f;
+            s = bvh::clamp01(-c / a);
+        } else {
+            f32 b = dot(d0, d1);
+            f32 denom = a * e - b * b;
+            if(0.0f < denom) {
+                s = bvh::clamp01((b * f - c * e) / denom);
+            } else {
+                s = 0.0f;
+            }
+            t = (b * s + f) / e;
+            if(t < 0.0f) {
+                t = 0.0f;
+                s = bvh::clamp01(-c / a);
+            } else if(1.0f < t) {
+                t = 1.0f;
+                s = bvh::clamp01((b - c) / a);
+            }
+        }
+    }
+    c0 = p0 + d0 * s;
+    c1 = p1 + d1 * t;
+    Vector3 d2 = c0 - c1;
+    return dot(d2, d2);
+}
+
+f32 sqrDistanceSegmentSegment(const Vector3& p0, const Vector3& p1, const Vector3& q0, const Vector3& q1)
+{
+    Vector3 d0 = q0 - p0;
+    Vector3 d1 = q1 - p1;
+    Vector3 r = p0 - p1;
+    f32 a = dot(d0, d0);
+    f32 e = dot(d1, d1);
+    f32 f = dot(d1, r);
+    f32 s, t;
+    if(a <= F32_EPSILON) {
+        s = 0.0f;
+        t = f / e;
+        t = bvh::clamp01(t);
+    } else {
+        f32 c = dot(d0, r);
+        if(e <= F32_EPSILON) {
+            t = 0.0f;
+            s = bvh::clamp01(-c / a);
+        } else {
+            f32 b = dot(d0, d1);
+            f32 denom = a * e - b * b;
+            if(0.0f < denom) {
+                s = bvh::clamp01((b * f - c * e) / denom);
+            } else {
+                s = 0.0f;
+            }
+            t = (b * s + f) / e;
+            if(t < 0.0f) {
+                t = 0.0f;
+                s = bvh::clamp01(-c / a);
+            } else if(1.0f < t) {
+                t = 1.0f;
+                s = bvh::clamp01((b - c) / a);
+            }
+        }
+    }
+    Vector3 c0 = p0 + d0 * s;
+    Vector3 c1 = p1 + d1 * t;
+    Vector3 d2 = c0 - c1;
+    return dot(d2, d2);
 }
 
 f32 testSphereCapsule(const Sphere& sphere, const Capsule& capsule)
@@ -457,8 +628,26 @@ f32 testSphereCapsule(const Sphere& sphere, const Capsule& capsule)
     return sphere.radius_ - BVH_SQRT(d2);
 }
 
-bool testSphereTriangle(HitRecordSet::Record& record, const Sphere& sphere, const Vector3& p0, const Vector3& p1, const Vector3& p2)
+f32 testCapsuleCapsule(const Capsule& capsule0, const Capsule& capsule1)
 {
+    Vector3 c0, c1;
+    f32 d2 = closestSegmentSegment(c0, c1, capsule0.p0_, capsule0.p1_, capsule1.p0_, capsule1.p1_);
+    f32 radius = capsule0.radius_ + capsule1.radius_;
+    return radius - BVH_SQRT(d2);
+}
+
+bool testSegmentCapsule(f32& t, const Vector3& p0, const Vector3& p1, const Capsule& capsule)
+{
+    Vector3 c0, c1;
+    f32 d2 = closestSegmentSegment(c0, c1, p0, p1, capsule.p0_, capsule.p1_);
+    f32 radius = capsule.radius_;
+    t = radius - BVH_SQRT(d2);
+    return 0.0f <= t;
+}
+
+bool testSphereTriangle(f32& t, const Sphere& sphere, const Vector3& p0, const Vector3& p1, const Vector3& p2)
+{
+    // Test if sphere lies outside the triangle plane
     // Translate to origin
     Vector3 A = p0 - sphere.center_;
     Vector3 B = p1 - sphere.center_;
@@ -470,6 +659,8 @@ bool testSphereTriangle(HitRecordSet::Record& record, const Sphere& sphere, cons
     f32 d = dot(A, V);
     f32 e = dot(V, V);
     bool sep0 = (rr * e) < (d * d);
+
+    // Test if sphere lies outside a triangle vertex
     f32 aa = dot(A, A);
     f32 bb = dot(B, B);
     f32 cc = dot(C, C);
@@ -479,6 +670,8 @@ bool testSphereTriangle(HitRecordSet::Record& record, const Sphere& sphere, cons
     bool sep1 = (rr < aa) && (aa < ab) && (aa < ac);
     bool sep2 = (rr < bb) && (bb < ab) && (bb < bc);
     bool sep3 = (rr < cc) && (cc < ac) && (cc < bc);
+
+    // Test if sphre lies outside a triangle edge
     Vector3 BC = C - B;
     Vector3 CA = A - C;
     f32 d0 = ab - aa;
@@ -493,77 +686,317 @@ bool testSphereTriangle(HitRecordSet::Record& record, const Sphere& sphere, cons
     Vector3 QC = C * e0 - Q0;
     Vector3 QA = A * e1 - Q1;
     Vector3 QB = B * e2 - Q2;
-    bool sep4 = (e0 * e0 * rr < dot(Q0, Q0)) && (0.0f < dot(Q0, QC));
-    bool sep5 = (e1 * e1 * rr < dot(Q1, Q1)) && (0.0f < dot(Q1, QA));
-    bool sep6 = (e2 * e2 * rr < dot(Q2, Q2)) && (0.0f < dot(Q2, QB));
-    if(sep0 || sep1 || sep2 || sep3 || sep4 || sep5 || sep6){
+    bool sep4 = ((e0 * e0 * rr) < dot(Q0, Q0)) && (0.0f < dot(Q0, QC));
+    bool sep5 = ((e1 * e1 * rr) < dot(Q1, Q1)) && (0.0f < dot(Q1, QA));
+    bool sep6 = ((e2 * e2 * rr) < dot(Q2, Q2)) && (0.0f < dot(Q2, QB));
+
+    if(sep0 || sep1 || sep2 || sep3 || sep4 || sep5 || sep6) {
         Vector3 normal = normalize(V);
-        f32 distance = dot(sphere.center_, normal) + dot(normal, p0);
-        record.direction_ = normal;
-        record.depth_ = -distance;
+        t = sphere.radius_ - dot(sphere.center_ - p0, normal);
         return true;
-    }else{
+    } else {
         return false;
     }
+}
+
+bool testCapsuleTriangle(f32& t, Vector3& point, const Capsule& capsule, const Vector3& p0, const Vector3& p1, const Vector3& p2)
+{
+    Vector3 e0 = p1 - p0;
+    Vector3 e1 = p2 - p1;
+    Vector3 e2 = p0 - p2;
+    Vector3 normal = normalize(cross(e0, -e2));
+    Vector3 direction = normalize(capsule.p1_ - capsule.p0_);
+
+    Vector3 reference;
+    f32 cosine = dot(normal, direction);
+    if(-F32_EPSILON <= cosine && cosine <= F32_EPSILON) {
+        reference = p0;
+    } else {
+        f32 tmp = dot(normal, (p0 - capsule.p0_)) / cosine;
+        Vector3 pointOnPlane = capsule.p0_ + direction * tmp;
+
+        Vector3 d0 = pointOnPlane - p0;
+        Vector3 d1 = pointOnPlane - p1;
+        Vector3 d2 = pointOnPlane - p2;
+        Vector3 c0 = cross(d0, e0);
+        Vector3 c1 = cross(d1, e1);
+        Vector3 c2 = cross(d2, e2);
+        f32 t0 = dot(c0, normal);
+        f32 t1 = dot(c1, normal);
+        f32 t2 = dot(c2, normal);
+
+        if(t0 <= 0.0f && t1 <= 0.0f && t2 <= 0.0f) {
+            reference = pointOnPlane;
+        } else {
+            f32 minDistance;
+            f32 distance;
+            tmp = clamp01(dot(d0, e0) / dot(e0, e0));
+            Vector3 point0 = p0 + tmp * e0;
+            d0 = pointOnPlane - point0;
+            minDistance = dot(d0, d0);
+            reference = point0;
+
+            tmp = clamp01(dot(d1, e1) / dot(e1, e1));
+            Vector3 point1 = p1 + tmp * e1;
+            d1 = pointOnPlane - point1;
+            distance = dot(d1, d1);
+            if(distance < minDistance) {
+                minDistance = distance;
+                reference = point1;
+            }
+
+            tmp = clamp01(dot(d2, e2) / dot(e2, e2));
+            Vector3 point2 = p2 + tmp * e2;
+            d2 = pointOnPlane - point2;
+            distance = dot(d2, d2);
+            if(distance < minDistance) {
+                minDistance = distance;
+                reference = point2;
+            }
+        }
+    }
+
+    closestPointSegment(point, capsule.p0_, capsule.p1_, reference);
+    f32 r = distance(point, reference);
+    if(r <= capsule.radius_) {
+        if(r <= F32_EPSILON) {
+            f32 h0 = dot(normal, capsule.p0_);
+            f32 h1 = dot(normal, capsule.p1_);
+            t = capsule.radius_ + absolute(minimum(h0, h1));
+        } else {
+            t = capsule.radius_ - r;
+        }
+        return true;
+    } else {
+        return false;
+    }
+}
+
+bool testOBBAABB(const OBB& obb0, const AABB& aabb)
+{
+    OBB obb1;
+    obb1.axis_[0] = {1.0f, 0.0f, 0.0f};
+    obb1.axis_[1] = {0.0f, 1.0f, 0.0f};
+    obb1.axis_[2] = {0.0f, 0.0f, 1.0f};
+    obb1.center_ = (aabb.bmin_ + aabb.bmax_) * 0.5f;
+    obb1.half_ = (aabb.bmax_ - aabb.bmin_) * 0.5f;
+
+    f32 r0, r1;
+    Vector3 R[3];
+    Vector3 AbsR[3];
+    for(u32 i = 0; i < 3; ++i) {
+        for(u32 j = 0; j < 3; ++j) {
+            R[i][j] = dot(obb0.axis_[i], obb1.axis_[j]);
+            AbsR[i][j] = absolute(R[i][j]) + F32_EPSILON;
+        }
+    }
+    Vector3 translate = obb1.center_ - obb0.center_;
+    translate = {dot(translate, obb0.axis_[0]), dot(translate, obb0.axis_[1]), dot(translate, obb0.axis_[2])};
+
+    //
+    for(u32 i = 0; i < 3; ++i) {
+        r0 = obb0.half_[i];
+        r1 = obb1.half_[0] * AbsR[i][0] + obb1.half_[1] * AbsR[i][1] + obb1.half_[2] * AbsR[i][2];
+        if((r0 + r1) < absolute(translate[i])) {
+            return false;
+        }
+    }
+
+    //
+    for(u32 i = 0; i < 3; ++i) {
+        r0 = obb0.half_[0] * AbsR[0][i] + obb0.half_[1] * AbsR[1][i] + obb0.half_[2] * AbsR[2][i];
+        r1 = obb1.half_[i];
+        if((r0 + r1) < absolute(translate[0] * R[0][i] + translate[1] * R[1][i] + translate[2] * R[2][i])) {
+            return false;
+        }
+    }
+
+    //
+    r0 = obb0.half_[1] * AbsR[2][0] + obb0.half_[2] * AbsR[1][0];
+    r1 = obb1.half_[1] * AbsR[0][2] + obb1.half_[2] * AbsR[0][1];
+    if((r0 + r1) < absolute(translate[2] * R[1][0] - translate[1] * R[2][0])) {
+        return false;
+    }
+
+    //
+    r0 = obb0.half_[1] * AbsR[2][1] + obb0.half_[2] * AbsR[1][1];
+    r1 = obb1.half_[0] * AbsR[0][2] + obb1.half_[2] * AbsR[0][0];
+    if((r0 + r1) < absolute(translate[2] * R[1][1] - translate[1] * R[2][1])) {
+        return false;
+    }
+
+    //
+    r0 = obb0.half_[1] * AbsR[2][2] + obb0.half_[2] * AbsR[1][2];
+    r1 = obb1.half_[0] * AbsR[0][1] + obb1.half_[1] * AbsR[0][0];
+    if((r0 + r1) < absolute(translate[2] * R[1][2] - translate[1] * R[2][2])) {
+        return false;
+    }
+
+    //
+    r0 = obb0.half_[0] * AbsR[2][0] + obb0.half_[2] * AbsR[0][0];
+    r1 = obb1.half_[1] * AbsR[1][2] + obb1.half_[2] * AbsR[1][1];
+    if((r0 + r1) < absolute(translate[0] * R[2][0] - translate[2] * R[0][0])) {
+        return false;
+    }
+
+    //
+    r0 = obb0.half_[0] * AbsR[2][1] + obb0.half_[2] * AbsR[0][1];
+    r1 = obb1.half_[0] * AbsR[1][2] + obb1.half_[2] * AbsR[1][0];
+    if((r0 + r1) < absolute(translate[0] * R[2][1] - translate[2] * R[0][1])) {
+        return false;
+    }
+
+    //
+    r0 = obb0.half_[0] * AbsR[2][2] + obb0.half_[2] * AbsR[0][2];
+    r1 = obb1.half_[0] * AbsR[1][1] + obb1.half_[1] * AbsR[1][0];
+    if((r0 + r1) < absolute(translate[0] * R[2][2] - translate[2] * R[0][2])) {
+        return false;
+    }
+
+    //
+    r0 = obb0.half_[0] * AbsR[1][0] + obb0.half_[1] * AbsR[0][0];
+    r1 = obb1.half_[1] * AbsR[2][2] + obb1.half_[2] * AbsR[2][1];
+    if((r0 + r1) < absolute(translate[1] * R[0][0] - translate[0] * R[1][0])) {
+        return false;
+    }
+
+    //
+    r0 = obb0.half_[0] * AbsR[1][1] + obb0.half_[1] * AbsR[0][1];
+    r1 = obb1.half_[0] * AbsR[2][2] + obb1.half_[2] * AbsR[2][0];
+    if((r0 + r1) < absolute(translate[1] * R[0][1] - translate[0] * R[1][1])) {
+        return false;
+    }
+
+    //
+    r0 = obb0.half_[0] * AbsR[1][2] + obb0.half_[1] * AbsR[0][2];
+    r1 = obb1.half_[0] * AbsR[2][1] + obb1.half_[1] * AbsR[2][0];
+    if((r0 + r1) < absolute(translate[1] * R[0][2] - translate[0] * R[1][2])) {
+        return false;
+    }
+
+    return true;
+}
+
+namespace
+{
+    Vector3 getCorner(const AABB& aabb, u32 n)
+    {
+        Vector3 point;
+        point.x_ = (0 != (0x01U & n)) ? aabb.bmax_.x_ : aabb.bmin_.x_;
+        point.y_ = (0 != (0x02U & n)) ? aabb.bmax_.y_ : aabb.bmin_.y_;
+        point.z_ = (0 != (0x04U & n)) ? aabb.bmax_.z_ : aabb.bmin_.z_;
+        return point;
+    }
+} // namespace
+
+bool testCapsuleAABB(const Capsule& capsule, const AABB& aabb)
+{
+    AABB extended;
+    extended.bmin_.x_ = aabb.bmin_.x_ - capsule.radius_;
+    extended.bmin_.y_ = aabb.bmin_.y_ - capsule.radius_;
+    extended.bmin_.z_ = aabb.bmin_.z_ - capsule.radius_;
+    extended.bmax_.x_ = aabb.bmax_.x_ + capsule.radius_;
+    extended.bmax_.y_ = aabb.bmax_.y_ + capsule.radius_;
+    extended.bmax_.z_ = aabb.bmax_.z_ + capsule.radius_;
+    Vector3 direction = capsule.p1_ - capsule.p0_;
+    Vector3 n = normalize(direction);
+    f32 tmin;
+    if(!testRayAABB(tmin, capsule.p0_, n, extended) || 1.0f < tmin) {
+        return false;
+    }
+    Vector3 point = capsule.p0_ + direction * tmin;
+    u32 u = 0;
+    u32 v = 0;
+    if(point.x_ < aabb.bmin_.x_) {
+        u |= 1U;
+    }
+    if(aabb.bmax_.x_ < point.x_) {
+        v |= 1U;
+    }
+    if(point.y_ < aabb.bmin_.y_) {
+        u |= 2U;
+    }
+    if(aabb.bmax_.y_ < point.y_) {
+        v |= 2U;
+    }
+    if(point.z_ < aabb.bmin_.z_) {
+        u |= 4U;
+    }
+    if(aabb.bmax_.z_ < point.z_) {
+        v |= 4U;
+    }
+    u32 m = u + v;
+    if(7U == m) {
+        tmin = bvh_limits_max;
+        f32 t;
+        if(testSegmentCapsule(t, getCorner(aabb, v), getCorner(aabb, v ^ 1U), capsule)) {
+            tmin = minimum(t, tmin);
+        }
+        if(testSegmentCapsule(t, getCorner(aabb, v), getCorner(aabb, v ^ 2U), capsule)) {
+            tmin = minimum(t, tmin);
+        }
+        if(testSegmentCapsule(t, getCorner(aabb, v), getCorner(aabb, v ^ 4U), capsule)) {
+            tmin = minimum(t, tmin);
+        }
+        if(bvh_limits_max <= tmin) {
+            return false;
+        }
+        return true;
+    }
+    if(0 == (m & (m - 1))) {
+        return true;
+    }
+    return testSegmentCapsule(tmin, getCorner(aabb, u ^ 7), getCorner(aabb, v), capsule);
 }
 
 namespace qbvh
 {
     //-----------------------------------------------------------
     // Collide segment vs aabb
-    s32 testRayAABB(
+    u32 testRayAABB(
         vector4_t tmin,
         vector4_t tmax,
-        vector4_t origin[3],
-        vector4_t invDir[3],
-        const s32 sign[3],
+        const vector4_t origin[3],
+        const vector4_t invDir[3],
+        const u32 sign[3],
         const Vector4 bbox[2][3])
     {
-        for(s32 i = 0; i < 3; ++i) {
+        for(u32 i = 0; i < 3; ++i) {
             vector4_t b0 = load(reinterpret_cast<const f32*>(&bbox[sign[i]][i]));
             tmin = maximum4(
                 tmin,
                 mul(sub(b0, origin[i]), invDir[i]));
 
-            vector4_t b1 = load(reinterpret_cast<const f32*>(&bbox[1 - sign[i]][i]));
+            vector4_t b1 = load(reinterpret_cast<const f32*>(&bbox[1U - sign[i]][i]));
             tmax = minimum4(
                 tmax,
                 mul(sub(b1, origin[i]), invDir[i]));
         }
-        return movemask(cmpge(tmax, tmin));
+        return static_cast<u32>(movemask(cmpge(tmax, tmin)));
     }
 
     // Collide aabb vs aabb
-    s32 testAABB(const vector4_t bbox0[2][3], const vector4_t bbox1[2][3])
+    u32 testAABB(const vector4_t bbox0[2][3], const Vector4 bbox1[2][3])
     {
-        union Mask
-        {
-            u32 u_;
-            f32 f_;
-        };
         Mask mask;
         mask.u_ = 0xFFFFFFFFU;
 
-#if defined(BVH_NEON) || defined(BVH_SOFT)
-		uvector4_t t = set1_u32(mask.u_);
-#else
-		vector4_t t = set1(mask.f_);
-#endif
+        uvector4_t t = set1_u32(mask);
         for(u32 i = 0; i < 3; ++i) {
-            t = and4(t, cmple(bbox0[0][i], bbox1[1][i]));
-            t = and4(t, cmple(bbox1[0][i], bbox0[1][i]));
+            vector4_t b0 = load(reinterpret_cast<const f32*>(&bbox0[0][i]));
+            vector4_t b1 = load(reinterpret_cast<const f32*>(&bbox1[1][i]));
+            t = and4(t, cmple(b0, b1));
+
+            vector4_t b2 = load(reinterpret_cast<const f32*>(&bbox0[1][i]));
+            vector4_t b3 = load(reinterpret_cast<const f32*>(&bbox1[0][i]));
+            t = and4(t, cmple(b3, b2));
         }
-        return movemask(t);
+        return static_cast<u32>(movemask(t));
     }
 
     // Collide sphre vs aabb
-    s32 testSphereAABB(const vector4_t position[3], const vector4_t radius, const Vector4 bbox[2][3])
+    u32 testSphereAABB(const vector4_t position[3], const vector4_t& radius, const Vector4 bbox[2][3])
     {
-        union Mask
-        {
-            u32 u_;
-            f32 f_;
-        };
         Mask mask;
         mask.u_ = 0xFFFFFFFFU;
 
@@ -574,16 +1007,12 @@ namespace qbvh
             vector4_t b1 = load(reinterpret_cast<const f32*>(&bbox[1][i]));
             tbbox[1][i] = add(b1, radius);
         }
-#if defined(BVH_NEON) || defined(BVH_SOFT)
-		uvector4_t t = set1_u32(mask.u_);
-#else
-		vector4_t t = set1(mask.f_);
-#endif
+        uvector4_t t = set1_u32(mask);
         for(u32 i = 0; i < 3; ++i) {
             t = and4(t, cmple(position[i], tbbox[1][i]));
             t = and4(t, cmple(tbbox[0][i], position[i]));
         }
-        return movemask(t);
+        return static_cast<u32>(movemask(t));
     }
 } // namespace qbvh
 
@@ -986,10 +1415,10 @@ HitRecord BinQBVH::intersect(Ray& ray)
     tminSSE = set1(F32_HITEPSILON);
     tmaxSSE = set1(ray.t_);
 
-    s32 raySign[3];
-    raySign[0] = (0.0f <= ray.direction_[0]) ? 0 : 1;
-    raySign[1] = (0.0f <= ray.direction_[1]) ? 0 : 1;
-    raySign[2] = (0.0f <= ray.direction_[2]) ? 0 : 1;
+    u32 sign[3];
+    sign[0] = (0.0f <= ray.direction_[0]) ? 0U : 1U;
+    sign[1] = (0.0f <= ray.direction_[1]) ? 0U : 1U;
+    sign[2] = (0.0f <= ray.direction_[2]) ? 0U : 1U;
 
     HitRecord hitRecord;
     hitRecord.t_ = ray.t_;
@@ -1021,8 +1450,8 @@ HitRecord BinQBVH::intersect(Ray& ray)
             } // for(u32 i=primIndex;
 
         } else {
-            u32 hit = qbvh::testRayAABB(tminSSE, tmaxSSE, origin, invDir, raySign, node.joint_.bbox_);
-            u32 split = raySign[node.joint_.axis0_] + (raySign[node.joint_.axis1_] << 1) + (raySign[node.joint_.axis2_] << 2);
+            u32 hit = qbvh::testRayAABB(tminSSE, tmaxSSE, origin, invDir, sign, node.joint_.bbox_);
+            u32 split = sign[node.joint_.axis0_] + (sign[node.joint_.axis1_] << 1) + (sign[node.joint_.axis2_] << 2);
 
             //それぞれの分割で反転するか. 2x2x2
             static const u16 TraverseOrder[] = {
@@ -1049,7 +1478,7 @@ HitRecord BinQBVH::intersect(Ray& ray)
     return hitRecord;
 }
 
-HitRecordSet BinQBVH::intersect(const Sphere& sphere)
+HitRecordSphere BinQBVH::intersect(const Sphere& sphere)
 {
     vector4_t position[3];
     position[0] = set1(sphere.center_.x_);
@@ -1058,7 +1487,7 @@ HitRecordSet BinQBVH::intersect(const Sphere& sphere)
 
     vector4_t radius = set1(sphere.radius_);
 
-    HitRecordSet hitRecord = {};
+    HitRecordSphere hitRecord = {};
 
     s32 stack = 0;
     u32 nodeStack[MaxDepth << 2];
@@ -1073,11 +1502,13 @@ HitRecordSet BinQBVH::intersect(const Sphere& sphere)
             u32 primEnd = primIndex + node.getNumPrimitives();
             for(u32 i = primIndex; i < primEnd; ++i) {
                 u32 idx = primitiveIndices_[i];
-                if(!testSphereTriangle(hitRecord.records_[hitRecord.count_], sphere, faces_[idx].p0_, faces_[idx].p1_, faces_[idx].p2_)) {
+                f32 t;
+                if(!testSphereTriangle(t, sphere, faces_[idx].p0_, faces_[idx].p1_, faces_[idx].p2_)) {
                     continue;
                 }
+                hitRecord.records_[hitRecord.count_].depth_ = t;
                 hitRecord.records_[hitRecord.count_].primitive_ = idx;
-                if(HitRecordSet::MaxHits<=++hitRecord.count_){
+                if(HitRecordSphere::MaxHits <= ++hitRecord.count_) {
                     return hitRecord;
                 }
             } // for(u32 i=primIndex;
@@ -1095,17 +1526,69 @@ HitRecordSet BinQBVH::intersect(const Sphere& sphere)
     return hitRecord;
 }
 
-#	if defined(BVH_UE)
+HitRecordCapsule BinQBVH::intersect(const Capsule& capsule)
+{
+    vector4_t aabb[2][3];
+    for(u32 i=0; i<3; ++i){
+        vector4_t bmin = set1(capsule.p0_[i]);
+        vector4_t bmax = set1(capsule.p1_[i]);
+        aabb[0][i] = minimum4(bmin, bmax);
+        aabb[1][i] = maximum4(bmin, bmax);
+    }
+    HitRecordCapsule hitRecord;
+    hitRecord.count_ = 0;
+
+    s32 stack = 0;
+    u32 nodeStack[MaxDepth << 2];
+    nodeStack[0] = 0;
+    while(0 <= stack) {
+        u32 index = nodeStack[stack];
+        const Node& node = nodes_[index];
+        BVH_ASSERT(node.leaf_.flags_ == node.joint_.flags_);
+        --stack;
+        if(node.isLeaf()) {
+            u32 primIndex = node.getPrimitiveIndex();
+            u32 primEnd = primIndex + node.getNumPrimitives();
+            for(u32 i = primIndex; i < primEnd; ++i) {
+                f32 t;
+                u32 idx = primitiveIndices_[i];
+                Vector3 point;
+                if(!testCapsuleTriangle(t, point, capsule, faces_[idx].p0_, faces_[idx].p1_, faces_[idx].p2_)) {
+                    continue;
+                }
+                HitRecordCapsule::Record& record = hitRecord.records_[hitRecord.count_];
+                record.point_ = point;
+                record.depth_ = t;
+                record.primitive_ = idx;
+                if(HitRecordCapsule::MaxHits<=++hitRecord.count_){
+                    return hitRecord;
+                }
+            } // for(u32 i=primIndex;
+
+        } else {
+            u32 hit = qbvh::testAABB(aabb, node.joint_.bbox_);
+            u32 children = node.joint_.children_;
+            for(u32 i = 0; i < 4; ++i) {
+                if(hit & (0x01U << i)) {
+                    nodeStack[++stack] = children + i;
+                }
+            }
+        }
+    } // while(0<=stack){
+    return hitRecord;
+}
+
+#if defined(BVH_UE)
 #else
-#ifdef _DEBUG
+#    ifdef _DEBUG
 void BinQBVH::print(const char* filename)
 {
     FILE* file = BVH_NULL;
-#    if defined(_MSC_VER)
+#        if defined(_MSC_VER)
     fopen_s(&file, filename, "wb");
-#    else
+#        else
     file = fopen(filename, "wb");
-#    endif
+#        endif
     if(BVH_NULL == file) {
         return;
     }
@@ -1133,6 +1616,6 @@ void BinQBVH::print(const char* filename)
     }
     fclose(file);
 }
-#endif
+#    endif
 #endif
 } // namespace bvh

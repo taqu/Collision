@@ -25,6 +25,15 @@ using bvh_int32_t = int32_t;
 using bvh_uint32_t = uint32_t;
 #    endif
 
+namespace bvh
+{
+union Mask
+{
+    bvh_uint32_t u_;
+    float f_;
+};
+}
+
 #    if defined(__SSE2__) || defined(__SSE3__) || defined(__SSE4_1__) || defined(__SSE4_2__) || defined(__AVX__) || defined(__AVX2__)
 //#        pragma message("use x86 simd")
 #        define BVH_SSE (1)
@@ -52,9 +61,9 @@ inline vector4_t set1(float x)
     return _mm_set1_ps(x);
 }
 
-inline uvector4_t set1_u32(float x)
+inline uvector4_t set1_u32(const bvh::Mask& x)
 {
-    return _mm_set1_ps(x);
+    return _mm_set1_ps(x.f_);
 }
 
 inline vector4_t maximum4(vector4_t x0, vector4_t x1)
@@ -82,6 +91,16 @@ inline vector4_t mul(vector4_t x0, vector4_t x1)
     return _mm_mul_ps(x0, x1);
 }
 
+inline vector4_t div(vector4_t x0, vector4_t x1)
+{
+    return _mm_div_ps(x0, x1);
+}
+
+inline vector4_t cmplt(vector4_t x0, vector4_t x1)
+{
+    return _mm_cmplt_ps(x0, x1);
+}
+
 inline vector4_t cmple(vector4_t x0, vector4_t x1)
 {
     return _mm_cmple_ps(x0, x1);
@@ -100,6 +119,11 @@ inline bvh_int32_t movemask(vector4_t x)
 inline vector4_t and4(vector4_t x0, vector4_t x1)
 {
     return _mm_and_ps(x0, x1);
+}
+
+inline vector4_t or4(vector4_t x0, vector4_t x1)
+{
+    return _mm_or_ps(x0, x1);
 }
 
 #    endif
@@ -131,9 +155,9 @@ inline vector4_t set1(float x)
     return vdupq_n_f32(x);
 }
 
-inline uvector4_t set1_u32(bvh_uint32_t x)
+inline uvector4_t set1_u32(const bvh::Mask& x)
 {
-    return vdupq_n_u32(x);
+    return vdupq_n_u32(x.u_);
 }
 
 inline vector4_t maximum4(vector4_t x0, vector4_t x1)
@@ -161,6 +185,16 @@ inline vector4_t mul(vector4_t x0, vector4_t x1)
     return vmulq_f32(x0, x1);
 }
 
+inline vector4_t div(vector4_t x0, vector4_t x1)
+{
+    return vdivq_f32(x0, x1);
+}
+
+inline uvector4_t cmplt(vector4_t x0, vector4_t x1)
+{
+    return vcltq_f32(x0, x1);
+}
+
 inline uvector4_t cmple(vector4_t x0, vector4_t x1)
 {
     return vcleq_f32(x0, x1);
@@ -177,6 +211,12 @@ inline uvector4_t and4(uvector4_t x0, uvector4_t x1)
 {
     return vandq_u32(x0, x1);
 }
+
+inline uvector4_t or4(uvector4_t x0, uvector4_t x1)
+{
+    return vorrq_u32(x0, x1);
+}
+
 #    endif
 
 #    ifdef __ARM_FEATURE_SVE
@@ -226,16 +266,9 @@ inline vector4_t set1(float x)
     return {x, x, x, x};
 }
 
-inline uvector4_t set1_u32(float x)
+inline uvector4_t set1_u32(const bvh::Mask& x)
 {
-    union Union
-    {
-        float f_;
-        bvh_uint32_t u_;
-    };
-    Union t;
-    t.f_ = x;
-    return {t.u_, t.u_, t.u_, t.u_};
+    return {x.u_, x.u_, x.u_, x.u_};
 }
 
 inline vector4_t maximum4(vector4_t x0, vector4_t x1)
@@ -269,6 +302,19 @@ inline vector4_t mul(vector4_t x0, vector4_t x1)
     return {x0.x_ * x1.x_, x0.y_ * x1.y_, x0.z_ * x1.z_, x0.w_ * x1.w_};
 }
 
+inline vector4_t div(vector4_t x0, vector4_t x1)
+{
+    return {x0.x_ / x1.x_, x0.y_ / x1.y_, x0.z_ / x1.z_, x0.w_ / x1.w_};
+}
+
+inline uvector4_t cmplt(vector4_t x0, vector4_t x1)
+{
+    auto cmple_ = [](float x0, float x1) {
+        return x0 < x1 ? 0xFFFFFFFFU : 0x00000000U;
+    };
+    return {cmple_(x0.x_, x1.x_), cmple_(x0.y_, x1.y_), cmple_(x0.z_, x1.z_), cmple_(x0.w_, x1.w_)};
+}
+
 inline uvector4_t cmple(vector4_t x0, vector4_t x1)
 {
     auto cmple_ = [](float x0, float x1) {
@@ -294,6 +340,11 @@ inline bvh_int32_t movemask(uvector4_t x)
 inline uvector4_t and4(uvector4_t x0, uvector4_t x1)
 {
     return {x0.x_ & x1.x_, x0.y_ & x1.y_, x0.z_ & x1.z_, x0.w_ & x1.w_};
+}
+
+inline uvector4_t or4(uvector4_t x0, uvector4_t x1)
+{
+    return {x0.x_ | x1.x_, x0.y_ | x1.y_, x0.z_ | x1.z_, x0.w_ | x1.w_};
 }
 #    endif
 
@@ -1062,12 +1113,14 @@ class Vector3
 public:
     void zero();
 
-    f32 operator[](s32 index) const
+    Vector3 operator-() const;
+
+    f32 operator[](u32 index) const
     {
         return reinterpret_cast<const f32*>(this)[index];
     }
 
-    f32& operator[](s32 index)
+    f32& operator[](u32 index)
     {
         return reinterpret_cast<f32*>(this)[index];
     }
@@ -1075,7 +1128,8 @@ public:
     f32 length() const;
     f32 halfArea() const;
 
-    Vector3& operator*=(f32 a);
+    Vector3& operator*=(f32 x);
+    Vector3& operator/=(f32 x);
 
     f32 x_, y_, z_;
 };
@@ -1087,8 +1141,11 @@ Vector3 operator*(f32 a, const Vector3& v);
 
 f32 distance(const Vector3& p0, const Vector3& p1);
 Vector3 normalize(const Vector3& v);
+Vector3 normalizeZero(const Vector3& v);
 f32 dot(const Vector3& v0, const Vector3& v1);
 Vector3 cross(const Vector3& v0, const Vector3& v1);
+
+void orthonormalBasis(Vector3& xaxis, Vector3& yaxis, const Vector3& zaxis);
 
 //--- Vector4
 //--------------------------------------------------------------
@@ -1096,6 +1153,16 @@ class Vector4
 {
 public:
     f32 x_, y_, z_, w_;
+
+    f32 operator[](u32 index) const
+    {
+        return reinterpret_cast<const f32*>(this)[index];
+    }
+
+    f32& operator[](u32 index)
+    {
+        return reinterpret_cast<f32*>(this)[index];
+    }
 };
 
 //--- Morton Code
@@ -1135,6 +1202,28 @@ struct AABB
     Vector3 bmax_;
 };
 
+//--- OBB
+//--------------------------------------------------------------
+struct OBB
+{
+    Vector3 axis_[3];
+    Vector3 half_;
+    Vector3 center_;
+};
+
+//--- Plane
+//--------------------------------------------------------------
+struct Plane
+{
+    f32 nx_;
+    f32 ny_;
+    f32 nz_;
+    f32 d_;
+
+    void set(const Vector3& point, const Vector3& normal);
+    f32 distance(const Vector3& point) const;
+};
+
 //--- Sphere
 //--------------------------------------------------------------
 struct Sphere
@@ -1150,6 +1239,15 @@ struct Capsule
     Vector3 p0_;
     Vector3 p1_;
     f32 radius_;
+};
+
+//--- Triangle
+//--------------------------------------------------------------
+struct Triangle
+{
+    Vector3 p0_;
+    Vector3 p1_;
+    Vector3 p2_;
 };
 
 //--- Ray
@@ -1177,7 +1275,7 @@ struct HitRecord
     u32 primitive_;
 };
 
-struct HitRecordSet
+struct HitRecordSphere
 {
     static constexpr u32 MaxHits = 4;
     struct Record
@@ -1190,32 +1288,63 @@ struct HitRecordSet
     Record records_[MaxHits];
 };
 
+struct HitRecordCapsule
+{
+    static constexpr u32 MaxHits = 4;
+    struct Record
+    {
+        Vector3 point_;
+        f32 depth_;
+        u32 primitive_;
+    };
+    u32 count_;
+    Record records_[MaxHits];
+};
+
 bool testRay(f32& t, const Ray& ray, const Vector3& p0, const Vector3& p1, const Vector3& p2);
 bool testRay(f32& tmin, f32& tmax, const Ray& ray, const AABB& aabb);
+bool testRayAABB(f32& tmin, const Vector3& origin, const Vector3& direction, const AABB& aabb);
 
-f32 sqrDistancePointSegment(const Vector3& start, const Vector3& end, const Vector3& point);
-void closestPointSegment(const Vector3& closestPoint, const Vector3& start, const Vector3& end, const Vector3& point);
+f32 sqrDistancePointSegment(const Vector3& p0, const Vector3& p1, const Vector3& point);
+void closestPointSegment(Vector3& closestPoint, const Vector3& start, const Vector3& end, const Vector3& point);
+
+/**
+ * @brief 
+ * @param c0 
+ * @param c1 
+ * @param p0 
+ * @param p1 
+ * @param q0 
+ * @param q1 
+ * @return squared distance between c0 and c1
+*/
+f32 closestSegmentSegment(Vector3& c0, Vector3& c1, const Vector3& p0, const Vector3& p1, const Vector3& q0, const Vector3& q1);
+f32 sqrDistanceSegmentSegment(const Vector3& p0, const Vector3& p1, const Vector3& q0, const Vector3& q1);
 f32 testSphereCapsule(const Sphere& sphere, const Capsule& capsule);
-
-bool testSphereTriangle(HitRecordSet::Record& record, const Sphere& sphere, const Vector3& p0, const Vector3& p1, const Vector3& p2);
+f32 testCapsuleCapsule(const Capsule& capsule0, const Capsule& capsule1);
+bool testSegmentCapsule(f32& t, const Vector3& p0, const Vector3& p1, const Capsule& capsule);
+bool testSphereTriangle(f32& t, const Sphere& sphere, const Vector3& p0, const Vector3& p1, const Vector3& p2);
+bool testCapsuleAABB(const Capsule& capsule, const AABB& aabb);
+bool testCapsuleTriangle(f32& t, Vector3& point, const Capsule& capsule, const Vector3& p0, const Vector3& p1, const Vector3& p2);
+bool testOBBAABB(const OBB& obb, const AABB& aabb);
 
 namespace qbvh
 {
     //-----------------------------------------------------------
     // Collide segment vs aabb
-    s32 testRayAABB(
+    u32 testRayAABB(
         vector4_t tmin,
         vector4_t tmax,
-        vector4_t origin[3],
-        vector4_t invDir[3],
-        const s32 sign[3],
+        const vector4_t origin[3],
+        const vector4_t invDir[3],
+        const u32 sign[3],
         const Vector4 bbox[2][3]);
 
     // Collide aabb vs aabb
-    s32 testAABB(const vector4_t bbox0[2][3], const vector4_t bbox1[2][3]);
+    u32 testAABB(const vector4_t bbox0[2][3], const Vector4 bbox1[2][3]);
 
     // Collide sphre vs aabb
-    s32 testSphereAABB(const vector4_t position[3], const vector4_t radius, const Vector4 bbox[2][3]);
+    u32 testSphereAABB(const vector4_t position[3], const vector4_t& radius, const Vector4 bbox[2][3]);
 } // namespace qbvh
 
 //--- BinQBVH
@@ -1302,10 +1431,17 @@ public:
 
     void build();
     HitRecord intersect(Ray& ray);
-    HitRecordSet intersect(const Sphere& sphere);
+    HitRecordSphere intersect(const Sphere& sphere);
+    HitRecordCapsule intersect(const Capsule& capsule);
+
     u32 getDepth() const
     {
         return depth_;
+    }
+
+    const AABB& getBounds() const
+    {
+        return bbox_;
     }
 
 #    if defined(BVH_UE)
