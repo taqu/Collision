@@ -604,6 +604,9 @@ bool less(const T& lhs, const T& rhs)
 //--- insertionsort
 //------------------------------------------------
 /**
+@param n ... number of items
+@param v ... items
+@param func ... comparison 'bool operator(const T& a, const T& b)'
  */
 template<class T, class U>
 void insertionsort(u32 n, T* v, U func)
@@ -620,6 +623,10 @@ void insertionsort(u32 n, T* v, U func)
     }
 }
 
+/**
+@param n ... number of items
+@param v ... items
+ */
 template<class T>
 void insertionsort(u32 n, T* v)
 {
@@ -629,6 +636,9 @@ void insertionsort(u32 n, T* v)
 //--- heapsort
 //------------------------------------------------
 /**
+@param n ... number of items
+@param v ... items
+@param func ... comparison 'bool operator(const T& a, const T& b)'
  */
 template<class T, class U>
 void heapsort(u32 n, T* v, U func)
@@ -674,6 +684,10 @@ void heapsort(u32 n, T* v, U func)
     }
 }
 
+/**
+@param n ... number of items
+@param v ... items
+ */
 template<class T>
 void heapsort(u32 n, T* v)
 {
@@ -683,8 +697,10 @@ void heapsort(u32 n, T* v)
 //--- quicksort
 //------------------------------------------------
 /**
-U: bool operator(const T& a, const T& b) const{ return a<b;}
-*/
+@param n ... number of items
+@param v ... items
+@param func ... comparison 'bool operator(const T& a, const T& b)'
+ */
 template<class T, class U>
 void quicksort(u32 n, T* v, U func)
 {
@@ -727,6 +743,10 @@ void quicksort(u32 n, T* v, U func)
     }
 }
 
+/**
+@param n ... number of items
+@param v ... items
+ */
 template<class T>
 void quicksort(u32 n, T* v)
 {
@@ -736,6 +756,10 @@ void quicksort(u32 n, T* v)
 //--- introsort
 //------------------------------------------------
 /**
+@param n ... number of items
+@param v ... items
+@param depth ... switch to another algorithm if depth <= 0
+@param func ... comparison 'bool operator(const T& a, const T& b)'
  */
 template<class T, class U>
 void introsort(u32 n, T* v, u32 depth, U func)
@@ -784,9 +808,15 @@ void introsort(u32 n, T* v, u32 depth, U func)
     }
 }
 
+/**
+@param n ... number of items
+@param v ... items
+@param func ... comparison 'bool operator(const T& a, const T& b)'
+ */
 template<class T, class U>
 void introsort(u32 n, T* v, U func)
 {
+    // switching depth is log2(n)
     u32 depth = 0;
     u32 t = n;
     while(1 < t) {
@@ -796,6 +826,10 @@ void introsort(u32 n, T* v, U func)
     introsort(n, v, depth, func);
 }
 
+/**
+@param n ... number of items
+@param v ... items
+ */
 template<class T>
 void introsort(u32 n, T* v)
 {
@@ -1145,6 +1179,12 @@ Vector3 normalizeZero(const Vector3& v);
 f32 dot(const Vector3& v0, const Vector3& v1);
 Vector3 cross(const Vector3& v0, const Vector3& v1);
 
+/**
+ * @brief Build the orthonormal basis from zaxis
+ * @param xaxis ... 
+ * @param yaxis ...
+ * @param zaxis ... 
+*/
 void orthonormalBasis(Vector3& xaxis, Vector3& yaxis, const Vector3& zaxis);
 
 //--- Vector4
@@ -1301,15 +1341,57 @@ struct HitRecordCapsule
     Record records_[MaxHits];
 };
 
+/**
+ * @brief Test ray vs triangle
+ * @param t ... the cross point = ray.origin_ + t * ray.direction_
+ * @param ray 
+ * @param p0 
+ * @param p1 
+ * @param p2 
+ * @return
+*/
 bool testRay(f32& t, const Ray& ray, const Vector3& p0, const Vector3& p1, const Vector3& p2);
+
+/**
+ * @brief Test ray vs AABB
+ * @param tmin 
+ * @param tmax 
+ * @param ray 
+ * @param aabb 
+ * @return 
+*/
 bool testRay(f32& tmin, f32& tmax, const Ray& ray, const AABB& aabb);
+
+/**
+ * @brief Test ray vs AABB
+ * @param tmin 
+ * @param origin 
+ * @param direction 
+ * @param aabb 
+ * @return 
+*/
 bool testRayAABB(f32& tmin, const Vector3& origin, const Vector3& direction, const AABB& aabb);
 
+/**
+ * @brief Get the squared distance between a point and a segment
+ * @param p0 
+ * @param p1 
+ * @param point 
+ * @return 
+*/
 f32 sqrDistancePointSegment(const Vector3& p0, const Vector3& p1, const Vector3& point);
+
+/**
+ * @brief Get the closest point on a segment from a point
+ * @param closestPoint 
+ * @param start 
+ * @param end 
+ * @param point 
+*/
 void closestPointSegment(Vector3& closestPoint, const Vector3& start, const Vector3& end, const Vector3& point);
 
 /**
- * @brief 
+ * @brief Get the closest points on segments
  * @param c0 
  * @param c1 
  * @param p0 
@@ -1319,7 +1401,17 @@ void closestPointSegment(Vector3& closestPoint, const Vector3& start, const Vect
  * @return squared distance between c0 and c1
 */
 f32 closestSegmentSegment(Vector3& c0, Vector3& c1, const Vector3& p0, const Vector3& p1, const Vector3& q0, const Vector3& q1);
+
+/**
+ * @brief Get the squared distance between segments
+ * @param p0 
+ * @param p1 
+ * @param q0 
+ * @param q1 
+ * @return 
+*/
 f32 sqrDistanceSegmentSegment(const Vector3& p0, const Vector3& p1, const Vector3& q0, const Vector3& q1);
+
 f32 testSphereCapsule(const Sphere& sphere, const Capsule& capsule);
 f32 testCapsuleCapsule(const Capsule& capsule0, const Capsule& capsule1);
 bool testSegmentCapsule(f32& t, const Vector3& p0, const Vector3& p1, const Capsule& capsule);
@@ -1330,7 +1422,6 @@ bool testOBBAABB(const OBB& obb, const AABB& aabb);
 
 namespace qbvh
 {
-    //-----------------------------------------------------------
     // Collide segment vs aabb
     u32 testRayAABB(
         vector4_t tmin,

@@ -295,44 +295,6 @@ f32 AABB::halfArea() const
     return (dx * dy + dy * dz + dz * dx);
 }
 
-#if 0
-    bool AABB::testRay(f32& tmin, f32& tmax, const Ray& ray) const
-    {
-        tmin = 0.0f;
-        tmax = ray.t_;
-
-        for(s32 i=0; i<3; ++i){
-            if(absolute(ray.direction_[i])<F32_HITEPSILON){
-                //線分とスラブが平行で、原点がスラブの中にない
-                if(ray.origin_[i]<bmin_[i] || bmax_[i]<ray.origin_[i]){
-                    return false;
-                }
-
-            }else{
-                f32 invD = ray.invDirection_[i];
-                f32 t1 = (bmin_[i] - ray.origin_[i]) * invD;
-                f32 t2 = (bmax_[i] - ray.origin_[i]) * invD;
-
-                if(t1>t2){
-                    if(t2>tmin) tmin = t2;
-                    if(t1<tmax) tmax = t1;
-                }else{
-                    if(t1>tmin) tmin = t1;
-                    if(t2<tmax) tmax = t2;
-                }
-
-                if(tmin > tmax){
-                    return false;
-                }
-                if(tmax < 0.0f){
-                    return false;
-                }
-            }
-        }
-        return true;
-    }
-#endif
-
 //--- Plane
 //--------------------------------------------------------------
 void Plane::set(const Vector3& point, const Vector3& normal)
@@ -1358,7 +1320,6 @@ void BinQBVH::splitBinned(u8& axis, u32& num_l, u32& num_r, AABB& bbox_l, AABB& 
     f32 separate = unit[axis] * (midBin + 1) + bbox.bmin_[axis];
     u32 mid = start + (numPrimitives >> 1);
 
-#if 1
     u32 left = start;
     u32 right = end - 1;
     for(;;) {
@@ -1376,15 +1337,6 @@ void BinQBVH::splitBinned(u8& axis, u32& num_l, u32& num_r, AABB& bbox_l, AABB& 
         ++left;
         --right;
     }
-#else
-    PrimitivePolicy::sort(numPrimitives, &primitiveIndices_[start], bestCentroids);
-    for(s32 i = start; i < end; ++i) {
-        if(separate < bestCentroids[primitiveIndices_[i]]) {
-            mid = i;
-            break;
-        }
-    }
-#endif
 
     if(mid <= start || end <= mid) {
         splitMid(axis, num_l, num_r, bbox_l, bbox_r, start, numPrimitives, bbox);
@@ -1453,7 +1405,7 @@ HitRecord BinQBVH::intersect(Ray& ray)
             u32 hit = qbvh::testRayAABB(tminSSE, tmaxSSE, origin, invDir, sign, node.joint_.bbox_);
             u32 split = sign[node.joint_.axis0_] + (sign[node.joint_.axis1_] << 1) + (sign[node.joint_.axis2_] << 2);
 
-            //それぞれの分割で反転するか. 2x2x2
+            //Traverse according to the ray's direction, so the number of combinations is 2x2x2.
             static const u16 TraverseOrder[] = {
                 0x0123U,
                 0x2301U,
