@@ -221,10 +221,11 @@ inline uvector4_t or4(uvector4_t x0, uvector4_t x1)
 
 #    ifdef __ARM_FEATURE_SVE
 #        pragma message("use arm sve")
+#        define BVH_SVE (1)
 #        include <arm_sve.h>
 #    endif
 
-#    if !defined(BVH_SSE) && !defined(BVH_NEON)
+#    if !defined(BVH_SSE) && !defined(BVH_NEON) && !(defined(BVH_SVE))
 #        define BVH_SOFT (1)
 
 struct vector4_t
@@ -590,11 +591,8 @@ struct SortCompFuncType
 };
 
 /**
-  @return true if lhs<rhs, false if lhs>=rhs
-  */
-// template<class T>
-// typedef bool(*SortCompFunc)(const T& lhs, const T& rhs);
-
+@return true if lhs<rhs, false if lhs>=rhs
+*/
 template<class T>
 bool less(const T& lhs, const T& rhs)
 {
@@ -865,6 +863,9 @@ inline void insertionsort_centroids(u32 numPrimitives, u32* primitiveIndices, co
 
 //--- Array
 //--------------------------------------------------------------
+/**
+@brief Simple array with fixed size expansion
+*/
 template<class T, u32 Increment = 128U>
 class Array
 {
@@ -1135,6 +1136,7 @@ struct RGB
     f32 b_;
     f32 x_;
 };
+
 #    if defined(BVH_UE)
 #    else
 void printImage(const char* filename, RGB* rgb, u32 width, u32 height);
@@ -1302,7 +1304,7 @@ struct Ray
 
     Vector3 origin_;
     Vector3 direction_;
-    Vector3 invDirection_;
+    Vector3 invDirection_; //!< Precomputed inverse of the direction for testing ray vs AABB
     f32 t_;
 };
 
@@ -1412,6 +1414,12 @@ f32 closestSegmentSegment(Vector3& c0, Vector3& c1, const Vector3& p0, const Vec
 */
 f32 sqrDistanceSegmentSegment(const Vector3& p0, const Vector3& p1, const Vector3& q0, const Vector3& q1);
 
+/**
+ * @brief Test sphere vs capsule
+ * @param sphere 
+ * @param capsule 
+ * @return the distance between closest points
+*/
 f32 testSphereCapsule(const Sphere& sphere, const Capsule& capsule);
 f32 testCapsuleCapsule(const Capsule& capsule0, const Capsule& capsule1);
 bool testSegmentCapsule(f32& t, const Vector3& p0, const Vector3& p1, const Capsule& capsule);
@@ -1440,6 +1448,9 @@ namespace qbvh
 
 //--- BinQBVH
 //--------------------------------------------------------------
+/**
+@brief Quad tree BVH by binned SAH
+*/
 class BinQBVH
 {
 public:
@@ -1554,8 +1565,43 @@ private:
     void getBBox(AABB& bbox, u32 start, u32 end);
 
     void recursiveConstruct(u32 numTriangles, const AABB& bbox);
+    /**
+     * @brief Full SAH
+     * @param axis 
+     * @param num_l 
+     * @param num_r 
+     * @param bbox_l 
+     * @param bbox_r 
+     * @param invArea 
+     * @param start 
+     * @param numPrimitives 
+     * @param bbox 
+    */
     void split(u8& axis, u32& num_l, u32& num_r, AABB& bbox_l, AABB& bbox_r, f32 invArea, u32 start, u32 numPrimitives, const AABB& bbox);
+    /**
+     * @brief Split at the mid point
+     * @param axis 
+     * @param num_l 
+     * @param num_r 
+     * @param bbox_l 
+     * @param bbox_r 
+     * @param start 
+     * @param numPrimitives 
+     * @param bbox 
+    */
     void splitMid(u8& axis, u32& num_l, u32& num_r, AABB& bbox_l, AABB& bbox_r, u32 start, u32 numPrimitives, const AABB& bbox);
+    /**
+     * @brief Binned SAH splitting
+     * @param axis 
+     * @param num_l 
+     * @param num_r 
+     * @param bbox_l 
+     * @param bbox_r 
+     * @param area 
+     * @param start 
+     * @param numPrimitives 
+     * @param bbox 
+    */
     void splitBinned(u8& axis, u32& num_l, u32& num_r, AABB& bbox_l, AABB& bbox_r, f32 area, u32 start, u32 numPrimitives, const AABB& bbox);
 
     f32 SAH_KI_;

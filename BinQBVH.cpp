@@ -381,7 +381,7 @@ bool testRay(f32& t, const Ray& ray, const Vector3& p0, const Vector3& p1, const
         }
 
     } else {
-        // Parallel face
+        // Parallel with the plane
         return false;
     }
 
@@ -1046,6 +1046,7 @@ void BinQBVH::build()
     f32* centroidY = centroidX + numTriangles;
     f32* centroidZ = centroidY + numTriangles;
 
+    // Get bboxes
     bbox_.setInvalid();
     for(u32 i = 0; i < numTriangles; ++i) {
         primitiveIndices_[i] = i;
@@ -1059,6 +1060,7 @@ void BinQBVH::build()
         bbox_.extend(primitiveBBoxes_[i]);
     }
 
+    // Build tree
     depth_ = 1;
     recursiveConstruct(numTriangles, bbox_);
 
@@ -1135,6 +1137,8 @@ void BinQBVH::recursiveConstruct(u32 numTriangles, const AABB& bbox)
             primStart[3] = primStart[2] + num[2];
 
         } else {
+            // Switch to split with the mid point, if the area is too small or the number of primitives is few.
+
             // Split top
             f32 area = work.bbox_.halfArea();
             if(area <= Epsilon) {
@@ -1176,7 +1180,7 @@ void BinQBVH::recursiveConstruct(u32 numTriangles, const AABB& bbox)
         }
 
         if(nodes_.capacity() < (nodes_.size() + 4)) {
-            nodes_.reserve(nodes_.capacity() << 1);
+            nodes_.reserve(nodes_.capacity() << 1); // expand with doubling
         }
 
         u32 child = nodes_.size();
@@ -1189,6 +1193,7 @@ void BinQBVH::recursiveConstruct(u32 numTriangles, const AABB& bbox)
     }
 }
 
+// 
 void BinQBVH::split(u8& axis, u32& num_l, u32& num_r, AABB& bbox_l, AABB& bbox_r, f32 invArea, u32 start, u32 numPrimitives, const AABB& bbox)
 {
     u32 end = start + numPrimitives;
@@ -1197,6 +1202,7 @@ void BinQBVH::split(u8& axis, u32& num_l, u32& num_r, AABB& bbox_l, AABB& bbox_r
     f32 area_l, area_r;
     f32 bestCost = bvh_limits_max;
 
+    // Choose the axis which has maximum extent.
     axis = static_cast<u8>(bbox.maxExtentAxis());
     f32* bestCentroids = &primitiveCentroids_[0] + axis * primitiveIndices_.size();
     bvh::insertionsort_centroids(numPrimitives, &primitiveIndices_[start], bestCentroids);
@@ -1224,6 +1230,7 @@ void BinQBVH::split(u8& axis, u32& num_l, u32& num_r, AABB& bbox_l, AABB& bbox_r
     num_r = numPrimitives - num_l;
 }
 
+// 
 void BinQBVH::splitMid(u8& axis, u32& num_l, u32& num_r, AABB& bbox_l, AABB& bbox_r, u32 start, u32 numPrimitives, const AABB& bbox)
 {
     // split at the mid point
@@ -1241,6 +1248,7 @@ void BinQBVH::splitMid(u8& axis, u32& num_l, u32& num_r, AABB& bbox_l, AABB& bbo
     getBBox(bbox_r, mid, end);
 }
 
+//
 void BinQBVH::splitBinned(u8& axis, u32& num_l, u32& num_r, AABB& bbox_l, AABB& bbox_r, f32 area, u32 start, u32 numPrimitives, const AABB& bbox)
 {
     BVH_ALIGN16 u32 minBins[NumBins];
@@ -1259,8 +1267,9 @@ void BinQBVH::splitBinned(u8& axis, u32& num_l, u32& num_r, AABB& bbox_l, AABB& 
     u32 midBin = NumBins / 2;
     u32 step = static_cast<u32>(::log10f(static_cast<f32>(numPrimitives)));
 
+    // Try all axis and choose the best axis and the best position
     Vector3 extent = bbox.extent();
-    Vector3 unit = extent * (1.0f / NumBins);
+    Vector3 unit = extent * (1.0f / NumBins); // Extents of each axis per a bin
     for(u8 curAxis = 0; curAxis < 3; ++curAxis) {
         for(u32 i = 0; i < NumBins; i += 4) {
             store(reinterpret_cast<f32*>(&minBins[i]), zero);
@@ -1293,6 +1302,7 @@ void BinQBVH::splitBinned(u8& axis, u32& num_l, u32& num_r, AABB& bbox_l, AABB& 
         BVH_ASSERT(0 <= binLeft && binLeft < NumBins);
         BVH_ASSERT(0 <= binRight && binRight < NumBins);
 
+        // SAH with binned AABBs
         s32 n_l = minBins[0];
         s32 n_r = 0;
         for(s32 i = 1; i < binRight; ++i) {
@@ -1317,6 +1327,7 @@ void BinQBVH::splitBinned(u8& axis, u32& num_l, u32& num_r, AABB& bbox_l, AABB& 
         centroids += primitiveIndices_.size();
     } // for(s32 curAxis=0;
 
+    // Sort by the separation value
     f32 separate = unit[axis] * (midBin + 1) + bbox.bmin_[axis];
     u32 mid = start + (numPrimitives >> 1);
 
@@ -1339,6 +1350,7 @@ void BinQBVH::splitBinned(u8& axis, u32& num_l, u32& num_r, AABB& bbox_l, AABB& 
     }
 
     if(mid <= start || end <= mid) {
+        //Cannot split, fallback to splitting at the mid point
         splitMid(axis, num_l, num_r, bbox_l, bbox_r, start, numPrimitives, bbox);
     } else {
 
@@ -1402,6 +1414,7 @@ HitRecord BinQBVH::intersect(Ray& ray)
             } // for(u32 i=primIndex;
 
         } else {
+            // Test ray and quad AABBs
             u32 hit = qbvh::testRayAABB(tminSSE, tmaxSSE, origin, invDir, sign, node.joint_.bbox_);
             u32 split = sign[node.joint_.axis0_] + (sign[node.joint_.axis1_] << 1) + (sign[node.joint_.axis2_] << 2);
 
